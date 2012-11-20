@@ -121,11 +121,15 @@ def configure():
     p.add_option("-p", "--passwd", dest="passwd", help="Database password")
     p.add_option("-u", "--user", dest="user", help="Database username")
     p.add_option('--host', dest="host", help="Database hostname")
-    p.add_option("-n", "--dry-dun", dest="dry_run", help="Don't write anything to database", 
+    p.add_option("-n", "--dry-dun", dest="dry_run", 
+                 help="Don't write anything to database", 
                  action="store_true", default=False)
-    p.add_option("-v", "--verbose", dest="verbose", action="store_true", default=False, help="Be verbose")
-    p.add_option("-t", "--tables-where", dest="table_where", help="Specify WHERE-predicate for identifying tables")
-    p.add_option("--docs", action="store_true", dest="documentation", help="Show documentation")
+    p.add_option("-v", "--verbose", dest="verbose", action="store_true", 
+                 default=False, help="Be verbose")
+    p.add_option("-t", "--tables-where", dest="table_where", 
+                 help="Specify WHERE-predicate for identifying tables")
+    p.add_option("--docs", action="store_true", dest="documentation", 
+                 help="Show documentation")
 
     options, remainder = p.parse_args()
 
