@@ -1,0 +1,207 @@
+#!/usr/bin/env python
+
+"""
+Copyright Martin Keegan, 2012; available under the GNU General Public
+Licence, v2
+
+mapsql
+======
+
+A tool for running SQL statements against multiple tables
+
+It only really makes sense to use non-SELECT statements; the
+tool does not return results.
+
+
+Operation
+---------
+
+First, a list of tables to be affected is built. By default, this
+is all tables and views in the database, unless restricted by the '-t'
+option.
+
+A dictionary of key value pairs is assembled from the command line
+you specify. The keys may be used in your SQL statement template;
+the values are substituted for the keys just before the statement
+is executed for each table. A special key, `table', is set to the
+name of each table in turn, whereas the other key value pairs
+remain constant.
+
+This allows you to specify statements such as:
+
+  ALTER TABLE %(table) ADD COLUMN %(my_col) INTEGER;
+
+And then wrap this in a bash script thus:
+
+  for column in age1 age2 age3
+  do
+    mapsql 'ALTER TABLE %(table) ADD COLUMN %(my_col) INTEGER;' my_col=$column
+  done
+
+which if run against table1 and table2 will yield the following six statements:
+
+  ALTER TABLE table1 ADD COLUMN age1 INTEGER;
+  ALTER TABLE table2 ADD COLUMN age1 INTEGER;
+  ALTER TABLE table1 ADD COLUMN age2 INTEGER;
+  ALTER TABLE table2 ADD COLUMN age2 INTEGER;
+  ALTER TABLE table1 ADD COLUMN age3 INTEGER;
+  ALTER TABLE table2 ADD COLUMN age3 INTEGER;
+
+The format for the SQL statement template is normal SQL; to use a
+variable from the dictionary, put its name in parentheses and
+precede it with a % sign.
+
+The constant values in the dictionary should be in a set of words
+after the SQL statement, in the form key1=value1 key2=value2 .
+
+It is advisable to quote MySQL table names lest they contain
+characters significant to SQL. Note that the two ways of
+doing this: ` and " are both significant to bash and must
+be handled with care.
+
+
+Options
+-------
+
+The '-t' option allows you to specify part of a WHERE-clause
+to limit which tables will get used. The argument to '-t' is
+appended to "WHERE table_name", so you can do (e.g.,):
+
+ mapsql ... -t "LIKE '%_image'"
+
+or
+
+ mapsql ... -t "IN (SELECT tbl from my_list_of_table_names)"
+
+The '-d' option lets you set the name of the database to work on; this
+will generally limit the tables to which your SQL statements will
+be applied.
+
+The '--host' option allows you to override the default database (upp-dun-db2)
+
+The '-p' option allows you to override the default password
+
+The '-u' option allows you to set the user
+
+The '-v' option prints the substantive SQL statements the tool generates
+
+The '-n' option triggers a dry-run; no actual changes are made to the
+database.
+
+In combination, '-v' and '-n' will safely show what would happen, without
+doing anything.
+
+
+"""
+
+import oursql
+import re
+import sys
+from optparse import OptionParser
+
+def usage():
+    print "Usage: mapsql [-options] command key1=val1 key2=val2 key3='value 3' key4=val4 ..."
+
+def get_db_config(options):
+    if options.user is None:
+        print >>sys.stderr, "You must specify a username"
+        sys.exit(1)
+
+    return {
+        'db': options.db,
+        'host': options.host,
+        'user': options.user,
+        'passwd': options.passwd,
+        'charset': 'utf8'
+        }
+
+def configure():
+    p = OptionParser()
+    p.add_option("-d", "--db", dest="db", help="Database name")
+    p.add_option("-p", "--passwd", dest="passwd", help="Database password")
+    p.add_option("-u", "--user", dest="user", help="Database username")
+    p.add_option('--host', dest="host", help="Database hostname")
+    p.add_option("-n", "--dry-dun", dest="dry_run", help="Don't write anything to database", 
+                 action="store_true", default=False)
+    p.add_option("-v", "--verbose", dest="verbose", action="store_true", default=False, help="Be verbose")
+    p.add_option("-t", "--tables-where", dest="table_where", help="Specify WHERE-predicate for identifying tables")
+    p.add_option("--docs", action="store_true", dest="documentation", help="Show documentation")
+
+    options, remainder = p.parse_args()
+
+    if options.documentation:
+        print __doc__
+        sys.exit(0)
+
+    if len(remainder) < 1:
+        usage()
+        sys.exit(1)
+
+    options.command = remainder.pop(0)
+
+    for kvpair in remainder:
+        if '=' not in kvpair:
+            print "Key/value pair `%s' must contain an = sign" % kvpair
+            print ""
+            usage()
+            sys.exit(1)
+
+    split_at_first_equals = lambda s: tuple(s.split("=", 1))
+
+    options.kvps = dict(map(split_at_first_equals, remainder))
+
+    return options
+
+def per_table(c, match_info, options):
+    def replace_substring(s, a, b, infix):
+        return "".join([s[:a], infix, s[b:]])
+
+    def replace_substring_tuple(s, replace_data):
+        a, b, infix = replace_data
+        p = options['kvps']
+        key = options['kvps'][infix[2:-1]]
+        return replace_substring(s, a, b, key)
+
+    sql = reduce(replace_substring_tuple, match_info, options['command'])
+    if options['verbose']:
+        print >>sys.stderr, sql
+    if not options['dry_run']:
+        c.execute(sql, plain_query=True)
+
+def run():
+    options = configure()
+
+    re0 = re.compile('%\([a-zA-Z0-9_]+\)')
+
+    matches = re0.finditer(options.command)
+
+    def get_match_info():
+        for m in matches:
+            a, b = m.span()
+            yield a, b, options.command[a:b]
+
+    match_info = list(get_match_info())
+    match_info.reverse()
+    if len(match_info) < 1:
+        print >>sys.stderr, "No matches in SQL command"
+
+    template = '''select TABLE_NAME from information_schema.TABLES where TABLE_SCHEMA = '%s' ''' % options.db
+    if options.table_where:
+        template += '''and TABLE_NAME ''' + options.table_where
+    template += ';'
+
+    db_config = get_db_config(options)
+    db = oursql.connect(**db_config)
+
+    with db as c:
+        c.execute(template)
+        tables = [ i[0] for i in c.fetchall() ]
+
+    for tbl in tables:
+        local_options = dict(map(lambda i: (i, getattr(options, i)), ['table_where', 'kvps', 'command', 'dry_run', 'verbose']))
+        local_options['kvps'].update({'table': tbl})
+        with db as c:
+            per_table(c, match_info, local_options)
+
+if __name__ == '__main__':
+    run()
