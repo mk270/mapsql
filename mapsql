@@ -201,8 +201,9 @@ def run():
         c.execute(template)
         tables = [ i[0] for i in c.fetchall() ]
 
+    opt_names = ['table_where', 'kvps', 'command', 'dry_run', 'verbose']
     for tbl in tables:
-        local_options = dict(map(lambda i: (i, getattr(options, i)), ['table_where', 'kvps', 'command', 'dry_run', 'verbose']))
+        local_options = dict(map(lambda i: (i, getattr(options, i)), opt_names))
         local_options['kvps'].update({'table': tbl})
         with db as c:
             per_table(c, match_info, local_options)
