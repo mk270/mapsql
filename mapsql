@@ -172,6 +172,13 @@ def per_table(c, match_info, options):
     if not options['dry_run']:
         c.execute(sql, plain_query=True)
 
+def make_template(options):
+    template = '''select TABLE_NAME from information_schema.TABLES where TABLE_SCHEMA = '%s' ''' % options.db
+    if options.table_where:
+        template += '''and TABLE_NAME ''' + options.table_where
+    template += ';'
+    return template
+
 def run():
     options = configure()
 
@@ -189,15 +196,12 @@ def run():
     if len(match_info) < 1:
         print >>sys.stderr, "No matches in SQL command"
 
-    template = '''select TABLE_NAME from information_schema.TABLES where TABLE_SCHEMA = '%s' ''' % options.db
-    if options.table_where:
-        template += '''and TABLE_NAME ''' + options.table_where
-    template += ';'
 
     db_config = get_db_config(options)
     db = oursql.connect(**db_config)
 
     with db as c:
+        template = make_template(options)
         c.execute(template)
         tables = [ i[0] for i in c.fetchall() ]
 
